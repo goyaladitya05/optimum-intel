@@ -104,6 +104,28 @@ def parse_args_openvino(parser: "ArgumentParser"):
         ),
     )
     optional_group.add_argument(
+        "--subfolder",
+        type=str,
+        default="",
+        help=(
+            "In case the relevant files are located inside a subfolder of the model repo on huggingface.co or locally, "
+            "specify the folder name here. For example, different LTX-Video versions live in subfolders of the same "
+            "repo: --subfolder ltxv-13b-0.9.8-dev"
+        ),
+    )
+    optional_group.add_argument(
+        "--revision",
+        type=str,
+        default="main",
+        help="Revision of the model on huggingface.co. Can be a branch name, tag, or commit id.",
+    )
+    optional_group.add_argument(
+        "--token",
+        type=str,
+        default=None,
+        help="The token to use as HTTP bearer authorization for remote files (e.g. for gated models).",
+    )
+    optional_group.add_argument(
         "--variant",
         type=str,
         default=None,
@@ -353,9 +375,12 @@ class OVExportCommand(BaseOptimumCLICommand):
         from ...intel.utils.modeling_utils import _infer_library_from_model_name_or_path
 
         if self.args.library is None:
-            # TODO: add revision, subfolder and token to args
             library_name = _infer_library_from_model_name_or_path(
-                model_name_or_path=self.args.model, cache_dir=self.args.cache_dir
+                model_name_or_path=self.args.model,
+                subfolder=self.args.subfolder,
+                revision=self.args.revision,
+                token=self.args.token,
+                cache_dir=self.args.cache_dir,
             )
             if library_name == "sentence_transformers":
                 logger.warning(
@@ -478,6 +503,9 @@ class OVExportCommand(BaseOptimumCLICommand):
                 convert_tokenizer=not self.args.disable_convert_tokenizer,
                 library_name=library_name,
                 variant=self.args.variant,
+                subfolder=self.args.subfolder,
+                revision=self.args.revision,
+                token=self.args.token,
                 model_kwargs=self.args.model_kwargs,
                 # **input_shapes,
             )
@@ -490,6 +518,9 @@ class OVExportCommand(BaseOptimumCLICommand):
                     output=output,
                     cache_dir=self.args.cache_dir,
                     trust_remote_code=self.args.trust_remote_code,
+                    subfolder=self.args.subfolder,
+                    revision=self.args.revision,
+                    token=self.args.token,
                     model_kwargs=self.args.model_kwargs,
                 )
                 # Move exported model to the original output directory
