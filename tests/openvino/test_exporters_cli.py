@@ -45,6 +45,7 @@ from optimum.intel import (  # noqa
     OVFluxFillPipeline,
     OVFluxPipeline,
     OVLatentConsistencyModelPipeline,
+    OVLTX2Pipeline,
     OVLTXPipeline,
     OVModelForAudioClassification,
     OVModelForCausalLM,
@@ -124,6 +125,13 @@ class OVCLIExportTestCase(unittest.TestCase):
         SUPPORTED_ARCHITECTURES.extend(
             [
                 ("text-to-image", "flux.2-klein"),
+            ]
+        )
+
+    if is_diffusers_version(">=", "0.38.0"):
+        SUPPORTED_ARCHITECTURES.extend(
+            [
+                ("text-to-video", "ltx2"),
             ]
         )
 
@@ -239,6 +247,7 @@ class OVCLIExportTestCase(unittest.TestCase):
         "llava": 2,
         "sana": 2,
         "ltx-video": 2,
+        "ltx2": 2,
         "sam": 0,  # no tokenizer
         "speecht5": 2,
         "kokoro": 0,  # uses g2p, no tokenizer

@@ -34,6 +34,7 @@ from optimum.intel import (
     OVFlux2KleinPipeline,
     OVFluxPipeline,
     OVLatentConsistencyModelPipeline,
+    OVLTX2Pipeline,
     OVLTXPipeline,
     OVModelForAudioClassification,
     OVModelForCausalLM,
@@ -98,6 +99,9 @@ class ExportModelTest(unittest.TestCase):
         "kokoro": OVModelForTextToSpeechSeq2Seq,
     }
 
+    if is_diffusers_version(">=", "0.38.0"):
+        SUPPORTED_ARCHITECTURES.update({"ltx2": OVLTX2Pipeline})
+
     if is_diffusers_version(">=", "0.37.0"):
         SUPPORTED_ARCHITECTURES.update({"flux.2-klein": OVFlux2KleinPipeline})
 
@@ -155,6 +159,7 @@ class ExportModelTest(unittest.TestCase):
         "flux.2-klein": {"transformer": "8.0", "vae_encoder": "8.0", "vae_decoder": "8.0"},
         "stable-diffusion-xl-refiner": {"vae_encoder": "128.0", "vae_decoder": "128.0"},
         "ltx-video": {"text_encoder": "8.0", "vae_encoder": "8.0", "vae_decoder": "8.0"},
+        "ltx2": {"text_encoder": "8.0", "vae_encoder": "8.0", "vae_decoder": "8.0"},
     }
 
     if is_transformers_version(">=", "4.51"):
