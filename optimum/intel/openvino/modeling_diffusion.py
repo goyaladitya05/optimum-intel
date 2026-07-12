@@ -1387,6 +1387,12 @@ class OVModelTransformerLTX2(OVPipelinePart):
     ):
         self.compile()
 
+        # audio_timestep is a separate scalar-per-batch [B] input. Text-to-video leaves it None
+        # (diffusers falls back to `timestep`); mirror that here before broadcasting the video
+        # timestep, so audio keeps its scalar-per-batch shape.
+        if audio_timestep is None:
+            audio_timestep = timestep if timestep is None or timestep.ndim == 1 else timestep[:, 0]
+
         # The transformer is exported with a per-token timestep [B, video_sequence_length] to
         # support image-to-video. Text-to-video passes a scalar-per-batch timestep [B]; broadcast
         # it to match the IR when needed.
@@ -1396,6 +1402,7 @@ class OVModelTransformerLTX2(OVPipelinePart):
         model_inputs = {
             "hidden_states": hidden_states,
             "timestep": timestep,
+            "audio_timestep": audio_timestep,
             "encoder_hidden_states": encoder_hidden_states,
         }
 

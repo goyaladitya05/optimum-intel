@@ -900,6 +900,7 @@ class LTX2TransformerDummyInputGenerator(DummyVisionInputGenerator):
         "audio_encoder_hidden_states",
         "audio_encoder_attention_mask",
         "timestep",
+        "audio_timestep",
     )
 
     def __init__(
@@ -963,6 +964,9 @@ class LTX2TransformerDummyInputGenerator(DummyVisionInputGenerator):
             # frame via a conditioning mask, so the transformer must accept a per-token timestep.
             seq_len = self.num_frames * self.height * self.width
             return self.random_float_tensor([self.batch_size, seq_len], framework=framework, dtype=float_dtype)
+        if input_name == "audio_timestep":
+            # Audio uses a scalar-per-batch [B] timestep (not per-token, unlike video).
+            return self.random_float_tensor([self.batch_size], framework=framework, dtype=float_dtype)
         return super().generate(input_name, framework, int_dtype, float_dtype)
 
 

@@ -2740,6 +2740,7 @@ class LTX2VideoTransformerOpenVINOConfig(SanaTransformerOpenVINOConfig):
             "fps": {},
             "audio_num_frames": {},
             "timestep": {0: "batch_size", 1: "video_sequence_length"},
+            "audio_timestep": {0: "batch_size"},
             "video_coords": {0: "batch_size", 2: "video_sequence_length"},
             "audio_coords": {0: "batch_size", 2: "audio_sequence_length"},
         }
