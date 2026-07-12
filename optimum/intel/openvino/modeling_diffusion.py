@@ -93,9 +93,10 @@ else:
     LTXImageToVideoPipeline = object
 
 if is_diffusers_version(">=", "0.38.0"):
-    from diffusers import LTX2Pipeline
+    from diffusers import LTX2ImageToVideoPipeline, LTX2Pipeline
 else:
     LTX2Pipeline = object
+    LTX2ImageToVideoPipeline = object
 
 if is_diffusers_version(">=", "0.29.0"):
     from diffusers import StableDiffusion3Img2ImgPipeline, StableDiffusion3Pipeline
@@ -1386,6 +1387,12 @@ class OVModelTransformerLTX2(OVPipelinePart):
     ):
         self.compile()
 
+        # The transformer is exported with a per-token timestep [B, video_sequence_length] to
+        # support image-to-video. Text-to-video passes a scalar-per-batch timestep [B]; broadcast
+        # it to match the IR when needed.
+        if timestep is not None and timestep.ndim == 1 and self._timestep_rank == 2:
+            timestep = timestep.unsqueeze(-1).expand(-1, hidden_states.shape[1]).contiguous()
+
         model_inputs = {
             "hidden_states": hidden_states,
             "timestep": timestep,
@@ -1427,6 +1434,13 @@ class OVModelTransformerLTX2(OVPipelinePart):
             return model_outputs
 
         return (model_outputs.get("out_sample"), model_outputs.get("audio_out_sample"))
+
+    @property
+    def _timestep_rank(self):
+        for inp in self.model.inputs:
+            if "timestep" in inp.get_any_name():
+                return len(inp.partial_shape)
+        return 1
 
 
 class OVModelConnectors(OVPipelinePart):
@@ -1962,6 +1976,7 @@ class OVLTX2Pipeline(OVDiffusionPipeline, OVTextualInversionLoaderMixin, LTX2Pip
         connectors: Optional[openvino.Model] = None,
         audio_vae_decoder: Optional[openvino.Model] = None,
         vocoder: Optional[openvino.Model] = None,
+        vae_encoder: Optional[openvino.Model] = None,
         tokenizer: Optional[CLIPTokenizer] = None,
         device: str = "CPU",
         compile: bool = True,
@@ -2031,7 +2046,12 @@ class OVLTX2Pipeline(OVDiffusionPipeline, OVTextualInversionLoaderMixin, LTX2Pip
         )
 
         self.vae_decoder = OVModelVaeDecoder(vae_decoder, self, DIFFUSION_MODEL_VAE_DECODER_SUBFOLDER)
-        self.vae_encoder = None
+        # vae_encoder is only exported/loaded for image-to-video; text-to-video leaves it as None.
+        self.vae_encoder = (
+            OVModelVaeEncoder(vae_encoder, self, DIFFUSION_MODEL_VAE_ENCODER_SUBFOLDER)
+            if isinstance(vae_encoder, openvino.Model)
+            else None
+        )
         self.text_encoder = (
             OVModelTextEncoder(text_encoder, self, DIFFUSION_MODEL_TEXT_ENCODER_SUBFOLDER)
             if text_encoder is not None
@@ -2089,7 +2109,7 @@ class OVLTX2Pipeline(OVDiffusionPipeline, OVTextualInversionLoaderMixin, LTX2Pip
             "transformer": self.transformer,
             "vocoder": vocoder,
         }
-        LTX2Pipeline.__init__(self, **diffusers_pipeline_args)
+        self.auto_model_class.__init__(self, **diffusers_pipeline_args)
 
         # This must exist because properties like batch_size check them
         self.unet = None
@@ -2120,6 +2140,8 @@ class OVLTX2Pipeline(OVDiffusionPipeline, OVTextualInversionLoaderMixin, LTX2Pip
             comp["transformer"] = self.transformer
         if self.vae_decoder is not None:
             comp["vae_decoder"] = self.vae_decoder
+        if self.vae_encoder is not None:
+            comp["vae_encoder"] = self.vae_encoder
         if self.text_encoder is not None:
             comp["text_encoder"] = self.text_encoder
         if self.connectors is not None:
@@ -2164,6 +2186,12 @@ class OVLTX2Pipeline(OVDiffusionPipeline, OVTextualInversionLoaderMixin, LTX2Pip
         self.vae_decoder.model = self._reshape_vae_decoder(
             self.vae_decoder.model, height, width, num_images_per_prompt, num_frames=num_frames
         )
+        # Reshape vae_encoder (image-to-video only) with pixel-space height/width; the encoder
+        # treats the conditioning image as a single frame (num_frames handled inside).
+        if self.vae_encoder is not None:
+            self.vae_encoder.model = self._reshape_vae_encoder(
+                self.vae_encoder.model, batch_size, height, width, num_frames=num_frames
+            )
         # Reshape text_encoder with batch_size only (tokenizer_max_length stays dynamic for Gemma)
         if self.text_encoder is not None:
             self.text_encoder.model = self._reshape_text_encoder(self.text_encoder.model, batch_size, -1)
@@ -2183,6 +2211,20 @@ class OVLTX2Pipeline(OVDiffusionPipeline, OVTextualInversionLoaderMixin, LTX2Pip
                         shapes[inputs][i] = -1
                 ov_model_attr.model.reshape(shapes)
         self.clear_requests()
+
+
+class OVLTX2ImageToVideoPipeline(OVLTX2Pipeline):
+    main_input_name = "image"
+    export_feature = "image-to-video"
+    auto_model_class = LTX2ImageToVideoPipeline
+    _vae_encoder_single_frame = True
+
+    @classproperty
+    def _all_ov_model_paths(cls) -> Dict[str, str]:
+        # Same submodels as text-to-video, plus the VAE encoder used to encode the input image.
+        models_paths = OVLTX2Pipeline._all_ov_model_paths
+        models_paths["vae_encoder"] = os.path.join(DIFFUSION_MODEL_VAE_ENCODER_SUBFOLDER, OV_XML_FILE_NAME)
+        return models_paths
 
 
 SUPPORTED_OV_PIPELINES = [
@@ -2243,7 +2285,9 @@ if is_diffusers_version(">=", "0.32"):
 
 if is_diffusers_version(">=", "0.38.0"):
     OV_TEXT2VIDEO_PIPELINES_MAPPING["ltx2"] = OVLTX2Pipeline
+    OV_IMAGE2VIDEO_PIPELINES_MAPPING["ltx2"] = OVLTX2ImageToVideoPipeline
     SUPPORTED_OV_PIPELINES.append(OVLTX2Pipeline)
+    SUPPORTED_OV_PIPELINES.append(OVLTX2ImageToVideoPipeline)
 
 if is_diffusers_version(">=", "0.29.0"):
     SUPPORTED_OV_PIPELINES.extend(

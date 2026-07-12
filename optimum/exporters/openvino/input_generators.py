@@ -865,9 +865,18 @@ class LTX2VaeDummyInputGenerator(DummyVisionInputGenerator):
     ):
         super().__init__(task, normalized_config, batch_size, num_channels, width, height, **kwargs)
         self.num_frames = num_frames
+        # Pixel-space properties used to shape the VAE encoder input (`sample`).
+        self.vae_in_channels = getattr(normalized_config.config, "in_channels", 3)
+        self.spatial_compression_ratio = getattr(normalized_config.config, "spatial_compression_ratio", 32)
 
     def generate(self, input_name: str, framework: str = "pt", int_dtype: str = "int64", float_dtype: str = "fp32"):
-        if input_name in ["sample", "latent_sample"]:
+        if input_name == "sample":
+            # VAE encoder input is in pixel space: `in_channels` channels, spatial dims that are a
+            # multiple of the spatial compression ratio, and a single conditioning frame
+            # (num_frames == 1 satisfies the temporal patchify, i.e. (num_frames - 1) % ratio == 0).
+            spatial = self.spatial_compression_ratio
+            return self.random_float_tensor([self.batch_size, self.vae_in_channels, 1, spatial, spatial])
+        if input_name == "latent_sample":
             return self.random_float_tensor(
                 [self.batch_size, self.num_channels, self.num_frames, self.height, self.width]
             )
@@ -890,6 +899,7 @@ class LTX2TransformerDummyInputGenerator(DummyVisionInputGenerator):
         "audio_coords",
         "audio_encoder_hidden_states",
         "audio_encoder_attention_mask",
+        "timestep",
     )
 
     def __init__(
@@ -948,6 +958,11 @@ class LTX2TransformerDummyInputGenerator(DummyVisionInputGenerator):
             return self.random_float_tensor([self.batch_size, self.encoder_seq_length, self.caption_channels])
         if input_name == "audio_encoder_attention_mask":
             return self.random_float_tensor([self.batch_size, self.encoder_seq_length])
+        if input_name == "timestep":
+            # Per-token timestep [B, video_sequence_length]; image-to-video locks the first
+            # frame via a conditioning mask, so the transformer must accept a per-token timestep.
+            seq_len = self.num_frames * self.height * self.width
+            return self.random_float_tensor([self.batch_size, seq_len], framework=framework, dtype=float_dtype)
         return super().generate(input_name, framework, int_dtype, float_dtype)
 
 
