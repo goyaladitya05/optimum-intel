@@ -1968,11 +1968,33 @@ class OVLTXImageToVideoPipeline(OVDiffusionPipeline, OVTextualInversionLoaderMix
         return super().__call__(image=image, **kwargs)
 
 
-class OVLTX2Pipeline(OVDiffusionPipeline, OVTextualInversionLoaderMixin, LTX2Pipeline):
-    main_input_name = "prompt"
-    export_feature = "text-to-video"
-    auto_model_class = LTX2Pipeline
+class _OVLTX2Base(OVDiffusionPipeline, OVTextualInversionLoaderMixin):
+    # Shared OpenVINO logic for LTX2 pipelines. Concrete subclasses add the matching diffusers
+    # pipeline (LTX2Pipeline / LTX2ImageToVideoPipeline) and set auto_model_class accordingly, so
+    # that self.auto_model_class.__init__ and diffusers method resolution use the right modality.
     _is_ltx_pipeline = True
+
+    @classproperty
+    def _all_ov_model_paths(cls) -> Dict[str, str]:
+        models_paths = {
+            "transformer": os.path.join(DIFFUSION_MODEL_TRANSFORMER_SUBFOLDER, OV_XML_FILE_NAME),
+            "vae_decoder": os.path.join(DIFFUSION_MODEL_VAE_DECODER_SUBFOLDER, OV_XML_FILE_NAME),
+            "text_encoder": os.path.join(DIFFUSION_MODEL_TEXT_ENCODER_SUBFOLDER, OV_XML_FILE_NAME),
+            "connectors": os.path.join(DIFFUSION_MODEL_CONNECTORS_SUBFOLDER, OV_XML_FILE_NAME),
+            "audio_vae_decoder": os.path.join(DIFFUSION_MODEL_AUDIO_VAE_DECODER_SUBFOLDER, OV_XML_FILE_NAME),
+            "vocoder": os.path.join(DIFFUSION_MODEL_VOCODER_SUBFOLDER, OV_XML_FILE_NAME),
+        }
+        return models_paths
+
+    @property
+    def _ov_model_names(self) -> List[str]:
+        """Return list of OV submodel names for quantization."""
+        return list(self._all_ov_model_paths.keys())
+
+    @property
+    def ov_models(self) -> Dict[str, Union[openvino.Model, openvino.CompiledModel]]:
+        """Return dict mapping submodel names to their OV models for quantization."""
+        return {name: component.model for name, component in self.components.items()}
 
     def __init__(
         self,
@@ -2220,7 +2242,13 @@ class OVLTX2Pipeline(OVDiffusionPipeline, OVTextualInversionLoaderMixin, LTX2Pip
         self.clear_requests()
 
 
-class OVLTX2ImageToVideoPipeline(OVLTX2Pipeline):
+class OVLTX2Pipeline(_OVLTX2Base, LTX2Pipeline):
+    main_input_name = "prompt"
+    export_feature = "text-to-video"
+    auto_model_class = LTX2Pipeline
+
+
+class OVLTX2ImageToVideoPipeline(_OVLTX2Base, LTX2ImageToVideoPipeline):
     main_input_name = "image"
     export_feature = "image-to-video"
     auto_model_class = LTX2ImageToVideoPipeline
@@ -2229,7 +2257,7 @@ class OVLTX2ImageToVideoPipeline(OVLTX2Pipeline):
     @classproperty
     def _all_ov_model_paths(cls) -> Dict[str, str]:
         # Same submodels as text-to-video, plus the VAE encoder used to encode the input image.
-        models_paths = OVLTX2Pipeline._all_ov_model_paths
+        models_paths = _OVLTX2Base._all_ov_model_paths
         models_paths["vae_encoder"] = os.path.join(DIFFUSION_MODEL_VAE_ENCODER_SUBFOLDER, OV_XML_FILE_NAME)
         return models_paths
 
