@@ -1399,6 +1399,14 @@ class OVModelTransformerLTX2(OVPipelinePart):
         if timestep is not None and timestep.ndim == 1 and self._timestep_rank == 2:
             timestep = timestep.unsqueeze(-1).expand(-1, hidden_states.shape[1]).contiguous()
 
+        # The pipelines hand us broadcasted views (e.g. `t.expand(batch)` for audio_timestep, or the
+        # per-token video timestep). `share_inputs=True` reads the raw buffer, so a non-contiguous
+        # (stride-0) view would feed garbage into the model. Force contiguous before inference.
+        if timestep is not None:
+            timestep = timestep.contiguous()
+        if audio_timestep is not None:
+            audio_timestep = audio_timestep.contiguous()
+
         model_inputs = {
             "hidden_states": hidden_states,
             "timestep": timestep,
