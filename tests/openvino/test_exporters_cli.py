@@ -25,6 +25,7 @@ from transformers import (
     AutoModelForZeroShotImageClassification,
     AutoProcessor,
     AutoTokenizer,
+    T5Tokenizer,
 )
 from utils_tests import (
     _ARCHITECTURES_TO_EXPECTED_INT8,
@@ -40,6 +41,7 @@ from utils_tests import (
 )
 
 from optimum.exporters.openvino.__main__ import main_export
+from optimum.exporters.openvino.convert import export_tokenizer
 from optimum.exporters.openvino.utils import COMPLEX_CHAT_TEMPLATES
 from optimum.intel import (  # noqa
     OVFlux2KleinPipeline,
@@ -75,7 +77,7 @@ from optimum.intel.openvino.configuration import (
     _DEFAULT_IGNORED_SCOPE_CONFIGS,
     _DEFAULT_INT8_FQ_CONFIGS,
 )
-from optimum.intel.openvino.utils import _HEAD_TO_AUTOMODELS, TemporaryDirectory
+from optimum.intel.openvino.utils import _HEAD_TO_AUTOMODELS, TemporaryDirectory, maybe_convert_tokenizer_to_fast
 from optimum.intel.utils.import_utils import (
     compare_versions,
     is_openvino_tokenizers_available,
@@ -930,6 +932,30 @@ class OVCLIExportTestCase(unittest.TestCase):
 
             if task.startswith("text-generation") and compare_versions("openvino-tokenizers", ">=", "2024.3.0.0"):
                 self.assertIn("Set tokenizer padding side to left", output)
+
+    @unittest.skipIf(not is_openvino_tokenizers_available(), reason="test required openvino tokenizers")
+    def test_exporters_slow_t5_tokenizer_converted_to_fast(self):
+        # The sentencepiece export bakes truncation into a constant Slice, which downstream runtimes
+        # cannot make runtime-settable, capping prompts at model_max_length. Converting to a fast
+        # tokenizer first produces a CombineSegments/Truncate graph where max_length stays settable.
+        import openvino as ov
+
+        with TemporaryDirectory() as tmpdir:
+            tokenizer_path = Path(tmpdir)
+            slow_tokenizer = T5Tokenizer.from_pretrained(MODEL_NAMES["mt5"])
+            self.assertFalse(slow_tokenizer.is_fast)
+            slow_tokenizer.save_pretrained(tokenizer_path)
+
+            fast_tokenizer = maybe_convert_tokenizer_to_fast(slow_tokenizer, tokenizer_path)
+            self.assertTrue(fast_tokenizer.is_fast)
+            sample = "Prompt used to compare slow and fast tokenization results"
+            self.assertEqual(slow_tokenizer(sample).input_ids, fast_tokenizer(sample).input_ids)
+
+            export_tokenizer(slow_tokenizer, tokenizer_path)
+            ov_tokenizer = ov.Core().read_model(tokenizer_path / "openvino_tokenizer.xml")
+            op_types = {op.get_type_name() for op in ov_tokenizer.get_ops()}
+            self.assertIn("CombineSegments", op_types)
+            self.assertNotIn("SentencepieceTokenizer", op_types)
 
     @parameterized.expand(TOKENIZER_CHAT_TEMPLATE_TESTS_MODELS)
     @unittest.skipIf(not is_openvino_tokenizers_available(), reason="test required openvino tokenizers")
