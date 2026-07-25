@@ -1903,10 +1903,11 @@ class OVSanaSprintPipeline(OVDiffusionPipeline, OVTextualInversionLoaderMixin, S
 
 class OVModelLTXTransformer(OVModelTransformer):
     def forward(self, hidden_states, timestep=None, **kwargs):
-        # T2V passes a scalar timestep [B]; the IR expects [B, S] where hidden_states is [B, S, C] and
-        # S = num_frames * height * width in patch space. Broadcast so every token gets the same noise level.
+        # T2V passes a scalar timestep [B]; feed [B, 1] and let the model broadcast internally
+        # (matches diffusers) rather than materializing a full per-token [B, S] timestep. I2V passes
+        # a rank-2 timestep and skips this branch.
         if timestep is not None and timestep.ndim == 1 and self._timestep_rank == 2:
-            timestep = timestep.unsqueeze(-1).expand(-1, hidden_states.shape[1]).contiguous()
+            timestep = timestep.unsqueeze(-1).contiguous()
         return super().forward(hidden_states=hidden_states, timestep=timestep, **kwargs)
 
     @property
