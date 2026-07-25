@@ -1391,9 +1391,10 @@ class OVModelTransformerLTX2(OVPipelinePart):
         if audio_timestep is None:
             audio_timestep = timestep if timestep is None or timestep.ndim == 1 else timestep[:, 0]
 
-        # T2V passes a scalar timestep [B]; the IR expects [B, S]. Broadcast to match.
+        # T2V passes a scalar timestep [B]; feed [B, 1] and let the model broadcast internally
+        # (matches diffusers) rather than materializing a full per-token [B, S] timestep.
         if timestep is not None and timestep.ndim == 1 and self._timestep_rank == 2:
-            timestep = timestep.unsqueeze(-1).expand(-1, hidden_states.shape[1]).contiguous()
+            timestep = timestep.unsqueeze(-1).contiguous()
 
         # `share_inputs=True` reads raw buffers, so stride-0 views (e.g. `t.expand(batch)`) must be materialized.
         if timestep is not None:
