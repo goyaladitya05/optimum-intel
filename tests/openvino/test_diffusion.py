@@ -1073,6 +1073,9 @@ class OVPipelineForText2VideoTest(unittest.TestCase):
     if is_diffusers_version(">=", "0.38.0"):
         SUPPORTED_ARCHITECTURES.extend(["ltx2"])
 
+    # pipelines that condition on every text encoder hidden state, not only the last one
+    SUPPORTED_ARCHITECTURES_WITH_HIDDEN_STATES = [arch for arch in SUPPORTED_ARCHITECTURES if arch == "ltx2"]
+
     OVMODEL_CLASS = OVPipelineForText2Video
     AUTOMODEL_CLASS = DiffusionPipeline
 
@@ -1137,6 +1140,37 @@ class OVPipelineForText2VideoTest(unittest.TestCase):
             ov_output = ov_pipeline(**inputs, generator=get_generator("pt", SEED)).frames
             diffusers_output = diffusers_pipeline(**inputs, generator=get_generator("pt", SEED)).frames
             np.testing.assert_allclose(ov_output, diffusers_output, atol=6e-3, rtol=1e-2)
+
+    @parameterized.expand(SUPPORTED_ARCHITECTURES_WITH_HIDDEN_STATES, skip_on_empty=True)
+    @require_diffusers
+    def test_compare_text_encoder_hidden_states(self, model_arch: str):
+        ov_pipeline = self.OVMODEL_CLASS.from_pretrained(MODEL_NAMES[model_arch], device=OPENVINO_DEVICE)
+        diffusers_pipeline = self.AUTOMODEL_CLASS.from_pretrained(MODEL_NAMES[model_arch])
+
+        # the tiny tokenizer maps the prompt to a single token, so use random ids with right padding instead
+        text_config = diffusers_pipeline.text_encoder.config.text_config
+        input_ids = torch.randint(3, text_config.vocab_size, (2, 16), generator=get_generator("pt", SEED))
+        input_ids[:, 0] = text_config.bos_token_id
+        attention_mask = torch.ones_like(input_ids)
+        attention_mask[1, -4:] = 0
+        attended = attention_mask.bool()
+
+        with torch.no_grad():
+            diffusers_outputs = diffusers_pipeline.text_encoder(
+                input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True
+            )
+        ov_outputs = ov_pipeline.text_encoder(input_ids, attention_mask, output_hidden_states=True)
+
+        self.assertEqual(len(ov_outputs.hidden_states), len(diffusers_outputs.hidden_states))
+        for i in range(len(ov_outputs.hidden_states)):
+            np.testing.assert_allclose(
+                ov_outputs.hidden_states[i][attended],
+                diffusers_outputs.hidden_states[i][attended],
+                atol=1e-4,
+                rtol=1e-2,
+                err_msg=f"Hidden states mismatch at layer {i}",
+            )
+        np.testing.assert_array_equal(ov_outputs.last_hidden_state, ov_outputs.hidden_states[-1])
 
     @parameterized.expand(SUPPORTED_ARCHITECTURES, skip_on_empty=True)
     @require_diffusers

@@ -11500,7 +11500,11 @@ class LTX2TextEncoderPatcher(ModelPatcher):
         model.config.output_hidden_states = True
         super().__init__(config, model, model_kwargs)
 
-        orig_forward = self.orig_forward
+        # call the text model directly: the patched top-level forward of Gemma3ForConditionalGeneration returns
+        # hidden_states[-1] without the final norm on transformers >= 5
+        text_model = model
+        for attr in ("model", "language_model"):
+            text_model = getattr(text_model, attr, text_model)
 
         def patched_forward(input_ids, attention_mask=None, **kwargs):
             if attention_mask is not None and attention_mask.dim() == 2:
@@ -11513,9 +11517,13 @@ class LTX2TextEncoderPatcher(ModelPatcher):
                 causal_mask = causal_mask * causal_positions[None, None, :, :]
                 causal_mask = (1.0 - causal_mask) * torch.finfo(torch.float32).min
                 attention_mask = {"full_attention": causal_mask, "sliding_attention": causal_mask}
-            outputs = orig_forward(input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True)
-            result = {"last_hidden_state": outputs.hidden_states[-1]}
-            for i, hs in enumerate(outputs.hidden_states):
+            outputs = text_model(
+                input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True, return_dict=True
+            )
+            hidden_states = list(outputs.hidden_states)
+            hidden_states[-1] = outputs.last_hidden_state
+            result = {"last_hidden_state": outputs.last_hidden_state}
+            for i, hs in enumerate(hidden_states):
                 result[f"hidden_states.{i}"] = hs
             return result
 
